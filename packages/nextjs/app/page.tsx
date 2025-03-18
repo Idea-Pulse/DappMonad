@@ -9,8 +9,11 @@ import { useAccount } from "wagmi";
 import { IdeaPulseLogo } from "~~/components/assets/IdeaPulseLogo";
 import { ParticlesBackground } from "~~/components/particles/ParticlesBackground";
 import { ContractProjectCard } from "~~/components/shared/ContractProjectCard";
+import { PrivyLogin } from "~~/components/PrivyLogin";
+import { usePrivy } from "@privy-io/react-auth";
 
 const Home: NextPage = () => {
+  const { authenticated } = usePrivy();
   const { address: connectedAddress } = useAccount();
 
   const totalProjects = 5; // Using fixed values or fetch from contract
@@ -166,19 +169,29 @@ const Home: NextPage = () => {
               </motion.div>
             </div>
 
-            <motion.div {...fadeInUp} className="flex flex-col gap-4 justify-center sm:flex-row md:gap-6">
+            <div className="flex flex-wrap justify-center gap-4 mt-8">
               <Link
                 href="/projects"
-                className="px-10 font-semibold rounded-full shadow-lg transition-transform md:px-12 btn btn-primary btn-lg hover:scale-105 shadow-primary/20 hover:shadow-primary/30"
+                className="px-8 font-semibold rounded-full shadow-lg transition-transform btn btn-outline btn-lg hover:scale-105"
               >
                 Explore Projects
               </Link>
-              {!connectedAddress && (
-                <button className="px-10 font-semibold rounded-full transition-transform md:px-12 btn btn-outline btn-lg hover:scale-105 border-primary/30 hover:border-primary/60">
-                  Connect Wallet
-                </button>
+              {authenticated ? (
+                <Link
+                  href="/dashboard"
+                  className="px-8 font-semibold rounded-full shadow-lg transition-transform btn btn-primary btn-lg hover:scale-105"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+                    Connected
+                  </div>
+                </Link>
+              ) : (
+                <div className="[&>button]:h-[3.75rem] [&>button]:px-8 [&>button]:text-lg [&>button]:font-semibold [&>div>label]:h-[3.75rem] [&>div>label]:px-8 [&>div>label]:text-lg [&>div>label]:font-semibold">
+                  <PrivyLogin />
+                </div>
               )}
-            </motion.div>
+            </div>
           </div>
         </div>
       </section>

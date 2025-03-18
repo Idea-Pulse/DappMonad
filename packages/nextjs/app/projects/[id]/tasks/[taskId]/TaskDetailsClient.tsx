@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { useAccount } from "wagmi";
+import { usePrivy } from "@privy-io/react-auth";
 import { useContractRead, useContractWrite } from "~~/hooks/contracts";
 import { notification } from "~~/utils/scaffold-eth";
 
@@ -70,6 +71,7 @@ export function TaskDetailsClient({ projectId, taskId }: { projectId: string; ta
   const { readMethod, isLoading } = useContractRead();
   const { writeMethod } = useContractWrite();
   const { address: connectedAddress } = useAccount();
+  const { login, authenticated, ready } = usePrivy();
   const [task, setTask] = useState<TaskData | null>(() => taskCache[`${projectId}-${taskId}`] || null);
   const [project, setProject] = useState<ProjectData | null>(() => projectCache[projectId] || null);
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -348,9 +350,9 @@ export function TaskDetailsClient({ projectId, taskId }: { projectId: string; ta
   const isDeadlinePassed = now > deadlineDate;
   
   // Determine if user can apply, start, or complete task
-  const canApply = task.status === 0; // Open status
-  const canStart = task.status === 1 && task.assignee === connectedAddress; // Assigned status and user is assignee
-  const canComplete = task.status === 2 && task.assignee === connectedAddress; // In Progress status and user is assignee
+  const canApply = task.status === 0 && authenticated && connectedAddress; // Open status and authenticated
+  const canStart = task.status === 1 && authenticated && task.assignee === connectedAddress; // Assigned status and user is assignee
+  const canComplete = task.status === 2 && authenticated && task.assignee === connectedAddress; // In Progress status and user is assignee
   
   // Format dates
   const createdTime = formatDistanceToNow(new Date(task.createdAt * 1000), { addSuffix: true });
@@ -542,72 +544,102 @@ export function TaskDetailsClient({ projectId, taskId }: { projectId: string; ta
               {/* Task Actions */}
               <div className="mt-6">
                 {/* Apply for task button */}
-                {task.status === 0 && connectedAddress && (
+                {task.status === 0 && (
                   <button 
                     className="btn btn-primary w-full mb-3 h-12" 
-                    onClick={handleApplyForTask}
-                    disabled={isSubmitting}
+                    onClick={authenticated ? handleApplyForTask : login}
+                    disabled={isSubmitting || (authenticated && !canApply)}
                   >
                     {isSubmitting ? (
                       <>
                         <span className="loading loading-spinner loading-xs"></span>
                         Processing...
                       </>
-                    ) : (
+                    ) : !authenticated ? (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">login</span>
+                        Sign In to Apply
+                      </>
+                    ) : canApply ? (
                       <>
                         <span className="material-icons text-sm align-text-bottom mr-1">assignment_turned_in</span>
                         Apply for this Task
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">block</span>
+                        Cannot Apply
                       </>
                     )}
                   </button>
                 )}
                 
                 {/* Start task button (for assignee) */}
-                {task.status === 1 && canStart && (
+                {task.status === 1 && (
                   <button 
                     className="btn btn-primary w-full mb-3 h-12" 
-                    onClick={handleStartTask}
-                    disabled={isSubmitting}
+                    onClick={canStart ? handleStartTask : (!authenticated ? login : undefined)}
+                    disabled={isSubmitting || (authenticated && !canStart)}
                   >
                     {isSubmitting ? (
                       <>
                         <span className="loading loading-spinner loading-xs"></span>
                         Processing...
                       </>
-                    ) : (
+                    ) : !authenticated ? (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">login</span>
+                        Sign In to Start
+                      </>
+                    ) : canStart ? (
                       <>
                         <span className="material-icons text-sm align-text-bottom mr-1">play_arrow</span>
                         Start Working on Task
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">block</span>
+                        Not Assigned to You
                       </>
                     )}
                   </button>
                 )}
                 
                 {/* Complete task button (for assignee) */}
-                {task.status === 2 && canComplete && (
+                {task.status === 2 && (
                   <button 
                     className="btn btn-primary w-full mb-3 h-12" 
-                    onClick={handleCompleteTask}
-                    disabled={isSubmitting}
+                    onClick={canComplete ? handleCompleteTask : (!authenticated ? login : undefined)}
+                    disabled={isSubmitting || (authenticated && !canComplete)}
                   >
                     {isSubmitting ? (
                       <>
                         <span className="loading loading-spinner loading-xs"></span>
                         Processing...
                       </>
-                    ) : (
+                    ) : !authenticated ? (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">login</span>
+                        Sign In to Complete
+                      </>
+                    ) : canComplete ? (
                       <>
                         <span className="material-icons text-sm align-text-bottom mr-1">check_circle</span>
                         Mark as Completed
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-icons text-sm align-text-bottom mr-1">block</span>
+                        Not Assigned to You
                       </>
                     )}
                   </button>
                 )}
                 
-                {!connectedAddress && (
-                  <div className="alert alert-warning">
-                    <span className="material-icons text-sm align-text-bottom mr-1">warning</span>
-                    <span>Connect your wallet to interact with this task</span>
+                {!authenticated && ready && (
+                  <div className="alert alert-info">
+                    <span className="material-icons text-sm align-text-bottom mr-1">info</span>
+                    <span>Sign in to interact with this task</span>
                   </div>
                 )}
               </div>

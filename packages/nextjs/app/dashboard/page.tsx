@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
+import { usePrivy } from "@privy-io/react-auth";
 import { formatDistanceToNow, differenceInDays, addDays } from "date-fns";
 import { useContractRead } from "~~/hooks/contracts/useContractRead";
 import { UserTasksTable } from "~~/components/dashboard/UserTasksTable";
+import { PrivyAuthGuard } from "~~/components/PrivyAuthGuard";
 
 // Project data type
 type ProjectData = {
@@ -418,10 +419,10 @@ const TokenReleaseSchedule = ({ tokenReleaseInfo, isLoadingData }: { tokenReleas
   );
 };
 
-const DashboardPage = () => {
+const DashboardContent = () => {
   const {
-    address
-  } = useAccount();
+    user
+  } = usePrivy();
   const [activeTab, setActiveTab] = useState("projects");
   const [projectsCount, setProjectsCount] = useState(0);
   const [tasksCount, setTasksCount] = useState(0);
@@ -438,6 +439,8 @@ const DashboardPage = () => {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isLoadingTokenData, setIsLoadingTokenData] = useState(true);
   const { readMethod } = useContractRead();
+
+  const userAddress = user?.wallet?.address;
 
   // Get user contributions (project IDs)
   const getUserContributions = useCallback(async (userAddress: string): Promise<number[]> => {
@@ -621,13 +624,13 @@ const DashboardPage = () => {
 
   // Unified function to fetch user investments data
   const fetchUserInvestmentsData = useCallback(async () => {
-    if (!address) return;
+    if (!userAddress) return;
       
       setIsLoadingData(true);
       
       try {
         // Get user contributions (project IDs)
-        const projectIds = await getUserContributions(address);
+        const projectIds = await getUserContributions(userAddress);
         
         if (projectIds.length === 0) {
         setUserInvestments([]);
@@ -655,7 +658,7 @@ const DashboardPage = () => {
         // Fetch project data, contribution amount, and funding info in parallel
         const [project, contributionAmount, fundingInfo] = await Promise.all([
           getProject(projectId),
-          getContribution(projectId, address),
+          getContribution(projectId, userAddress),
           getFundingInfo(projectId)
         ]);
         
@@ -751,17 +754,17 @@ const DashboardPage = () => {
     } finally {
       setIsLoadingData(false);
     }
-  }, [address, getUserContributions, getProject, getContribution, getFundingInfo]);
+  }, [userAddress, getUserContributions, getProject, getContribution, getFundingInfo]);
 
   // Fetch token release information
   const fetchTokenReleaseInfo = useCallback(async () => {
-    if (!address) return;
+    if (!userAddress) return;
     
     setIsLoadingTokenData(true);
     
     try {
       // Get user contributions (project IDs)
-      const projectIds = await getUserContributions(address);
+      const projectIds = await getUserContributions(userAddress);
       
       if (projectIds.length === 0) {
         setTokenReleaseInfo([]);
@@ -774,7 +777,7 @@ const DashboardPage = () => {
           // Fetch project data, contribution amount, funding info, and token info in parallel
           const [project, contribution, fundingInfo, tokenInfo] = await Promise.all([
             getProject(projectId),
-            getContribution(projectId, address),
+            getContribution(projectId, userAddress),
             getFundingInfo(projectId),
             getTokenInfo(projectId)
           ]);
@@ -808,7 +811,7 @@ const DashboardPage = () => {
       setIsLoadingTokenData(false);
       }
   }, [
-    address, 
+    userAddress, 
     getUserContributions, 
     getProject, 
     getContribution, 
@@ -819,11 +822,11 @@ const DashboardPage = () => {
   
   // Fetch user tasks data for summary cards
   const fetchUserTasksSummary = useCallback(async () => {
-    if (!address) return;
+    if (!userAddress) return;
 
     try {
       // Get user tasks
-      const userTaskIds = await readMethod("getUserTasks", [address]);
+      const userTaskIds = await readMethod("getUserTasks", [userAddress]);
       
       if (userTaskIds && Array.isArray(userTaskIds)) {
         setTasksCount(userTaskIds.length);
@@ -831,15 +834,15 @@ const DashboardPage = () => {
     } catch (err) {
       console.error("Failed to fetch tasks summary:", err);
     }
-  }, [address, readMethod]);
+  }, [userAddress, readMethod]);
 
   // Fetch user investments summary for token balance
   const fetchUserTokenBalance = useCallback(async () => {
-    if (!address) return;
+    if (!userAddress) return;
 
     try {
       // Get user contributions (project IDs)
-      const projectIds = await getUserContributions(address);
+      const projectIds = await getUserContributions(userAddress);
       
       if (projectIds && Array.isArray(projectIds)) {
         // Calculate token allocations
@@ -856,7 +859,7 @@ const DashboardPage = () => {
             const fundingEndTime = fundingInfo.endTime;
             
             // Get user's contribution for this project
-            const userContribution = await getContribution(projectId, address);
+            const userContribution = await getContribution(projectId, userAddress);
             if (!userContribution) continue;
             
             const userContributionAmount = Number(userContribution) / 1e18;
@@ -899,7 +902,7 @@ const DashboardPage = () => {
     } catch (err) {
       console.error("Failed to fetch token balance:", err);
     }
-  }, [address, getUserContributions, getFundingInfo, getContribution]);
+  }, [userAddress, getUserContributions, getFundingInfo, getContribution]);
 
   // Fetch all data when component mounts
   useEffect(() => {
@@ -910,438 +913,448 @@ const DashboardPage = () => {
   }, [fetchUserInvestmentsData, fetchUserTasksSummary, fetchUserTokenBalance, fetchTokenReleaseInfo]);
 
   return (
-    <div className="flex flex-col pt-20 min-h-screen sm:pt-24 animate-fade-in">
-      {/* SVG Background */}
-      <div className="fixed inset-0 z-[-1] opacity-5">
-        <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <pattern id="dashboardGrid" width="50" height="50" patternUnits="userSpaceOnUse">
-              <path d="M50,0 L0,0 L0,50" fill="none" stroke="currentColor" strokeWidth="0.5" />
-              <circle cx="0" cy="0" r="1" fill="currentColor" />
-            </pattern>
-            <pattern id="dashboardDots" width="20" height="20" patternUnits="userSpaceOnUse">
-              <circle cx="10" cy="10" r="1" fill="currentColor" />
-            </pattern>
-            <linearGradient id="fadeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="currentColor" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#dashboardDots)" />
-          <rect width="100%" height="100%" fill="url(#dashboardGrid)" />
-          <rect width="100%" height="100%" fill="url(#fadeGradient)" />
-        </svg>
-      </div>
-
-      <div className="container px-4 mx-auto">
-        {/* Header with glass effect */}
-        <div className="mb-10 backdrop-blur-sm bg-base-100/40 p-6 rounded-2xl shadow-xl border border-base-200">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="relative">
-              <h1 className="text-3xl font-bold sm:text-4xl bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Dashboard Overview</h1>
-            <div className="absolute -bottom-2 left-0 w-1/2 h-1 bg-gradient-to-r from-primary to-secondary rounded-full"></div>
-          </div>
-            <div className="flex items-center gap-2 bg-base-200/50 rounded-full px-4 py-2 text-sm">
-              <div className="w-2 h-2 bg-success rounded-full animate-pulse"></div>
-            <span>Last updated: {new Date().toLocaleDateString()}</span>
-            </div>
-          </div>
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex flex-col pt-20 min-h-screen sm:pt-24 animate-fade-in">
+        {/* SVG Background */}
+        <div className="fixed inset-0 z-[-1] opacity-5">
+          <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="dashboardGrid" width="50" height="50" patternUnits="userSpaceOnUse">
+                <path d="M50,0 L0,0 L0,50" fill="none" stroke="currentColor" strokeWidth="0.5" />
+                <circle cx="0" cy="0" r="1" fill="currentColor" />
+              </pattern>
+              <pattern id="dashboardDots" width="20" height="20" patternUnits="userSpaceOnUse">
+                <circle cx="10" cy="10" r="1" fill="currentColor" />
+              </pattern>
+              <linearGradient id="fadeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="currentColor" stopOpacity="0.2" />
+                <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#dashboardDots)" />
+            <rect width="100%" height="100%" fill="url(#dashboardGrid)" />
+            <rect width="100%" height="100%" fill="url(#fadeGradient)" />
+          </svg>
         </div>
 
-        {/* Portfolio Analytics Section - Moved to top */}
-        <div className="mb-8 card bg-base-100 shadow-xl p-4 sm:p-6">
-          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            Portfolio Analytics
-          </h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Left column - Investment Breakdown */}
-            <div className="md:col-span-1">
-              {/* Investment Breakdown Card - Enhanced with charts */}
-              <div className="card bg-base-200/50 shadow-sm h-full">
-                <div className="card-body p-3 sm:p-4 flex flex-col justify-between h-full">
-                  <div>
-                    <h3 className="card-title text-base">Investment Breakdown by Tags</h3>
-                    
-                    <div className="flex flex-col gap-3 mt-4">
-                      {/* Horizontal Bar Chart */}
-                      <div className="space-y-3">
-                        {Object.keys(investmentDistribution).length === 0 ? (
-                          <div className="text-sm text-center py-4 opacity-70">No tag data available</div>
-                        ) : (
-                          <>
-                            {/* Calculate total for percentage */}
-                            {(() => {
-                              const totalTags = Object.values(investmentDistribution).reduce((sum, count) => sum + count, 0);
-                              
-                              // Get top 8 tags by count
-                              const topTags = Object.entries(investmentDistribution)
-                                .sort(([, countA], [, countB]) => countB - countA)
-                                .slice(0, 8);
-                              
-                              // Color palette for bars
-                              const colors = [
-                                "bg-primary", "bg-secondary", "bg-accent", 
-                                "bg-info", "bg-success", "bg-warning", 
-                                "bg-error", "bg-neutral"
-                              ];
-                              
-                              return topTags.map(([tag, count], index) => (
-                                <div key={tag}>
-                                  <div className="flex justify-between items-center mb-1.5">
-                                    <span className="text-sm font-medium flex items-center gap-1.5">
-                                      <span className={`w-3 h-3 rounded-full ${colors[index % colors.length]} inline-block`}></span>
-                                      {tag.charAt(0).toUpperCase() + tag.slice(1)}
-                                    </span>
-                                    <span className="text-sm">{count}</span>
-                                  </div>
-                                  <div className="w-full bg-base-300 rounded-full h-3 overflow-hidden">
-                                    <div 
-                                      className={`${colors[index % colors.length]} h-3 rounded-full shadow-inner`}
-                                      style={{ width: `${(count / totalTags) * 100}%` }}
-                                    ></div>
-                                  </div>
-                                </div>
-                              ));
-                            })()}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Summary Stats - Moved to bottom for alignment */}
-                  <div className="flex justify-between items-center mt-auto pt-3 text-sm text-center">
-                    <div>
-                      <div className="font-bold text-lg">{projectsCount}</div>
-                      <div className="opacity-70">Total</div>
-                    </div>
-                    <div className="divider divider-horizontal mx-0"></div>
-                    <div>
-                      <div className="font-bold text-lg">{investmentStatusDistribution.funded}</div>
-                      <div className="opacity-70">Funded</div>
-                    </div>
-                    <div className="divider divider-horizontal mx-0"></div>
-                    <div>
-                      <div className="font-bold text-lg">{investmentStatusDistribution.active}</div>
-                      <div className="opacity-70">Active</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+        <div className="container px-4 mx-auto">
+          {/* Header with glass effect */}
+          <div className="mb-10 backdrop-blur-sm bg-base-100/40 p-6 rounded-2xl shadow-xl border border-base-200">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="relative">
+                <h1 className="text-3xl font-bold sm:text-4xl bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">Dashboard Overview</h1>
+              <div className="absolute -bottom-2 left-0 w-1/2 h-1 bg-gradient-to-r from-primary to-secondary rounded-full"></div>
             </div>
-
-            {/* Middle column - Stats Cards (moved from right) */}
-            <div className="md:col-span-1 flex flex-col h-full">
-              <div className="grid grid-rows-3 gap-3 h-full">
-              {/* Projects Backed Card */}
-              <div className="card bg-gradient-to-br from-primary/80 to-primary text-primary-content shadow-sm">
-                  <div className="card-body p-3 flex flex-col justify-between">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h2 className="text-base font-medium opacity-80">Projects Backed</h2>
-                      <p className="text-2xl font-bold">{projectsCount}</p>
-                    </div>
-                    <div className="rounded-full bg-primary-content/20 p-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-xs text-black">
-                    <span className="flex items-center gap-1">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                      </svg>
-                      Investment activity
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tasks Participated Card */}
-              <div className="card bg-gradient-to-br from-secondary/80 to-secondary text-secondary-content shadow-sm">
-                  <div className="card-body p-3 flex flex-col justify-between">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h2 className="text-base font-medium opacity-80">Tasks Participated</h2>
-                      <p className="text-2xl font-bold">{tasksCount}</p>
-                    </div>
-                    <div className="rounded-full bg-secondary-content/20 p-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
-                  </div>
-                  </div>
-                  <div className="mt-2 text-xs text-secondary-content">
-                    <span className="flex items-center gap-1">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Project contributions
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Token Balance Card */}
-              <div className="card bg-gradient-to-br from-accent/80 to-accent text-accent-content shadow-sm">
-                  <div className="card-body p-3 flex flex-col justify-between">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h2 className="text-base font-medium opacity-80">Token Balance</h2>
-                      <div className="flex items-baseline gap-1">
-                        <p className="text-2xl font-bold">{tokenBalance.unlocked.toLocaleString()}</p>
-                        <p className="text-xs opacity-80">/ {tokenBalance.total.toLocaleString()}</p>
-                      </div>
-                    </div>
-                    <div className="rounded-full bg-accent-content/20 p-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                </div>
-                  <div className="mt-2">
-                    <div className="w-full bg-accent-content/30 h-1.5 rounded-full overflow-hidden">
-                      <div 
-                        className="bg-accent-content h-full rounded-full" 
-                        style={{ width: `${tokenBalance.total > 0 ? (tokenBalance.unlocked / tokenBalance.total) * 100 : 0}%` }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between text-xs mt-1 text-accent-content">
-                      <span>Unlocked</span>
-                      <span>{tokenBalance.total > 0 ? Math.round((tokenBalance.unlocked / tokenBalance.total) * 100) : 0}%</span>
-                      </div>
-                    </div>
-                  </div>
+              <div className="flex items-center gap-2 bg-base-200/50 rounded-full px-4 py-2 text-sm">
+                <div className="w-2 h-2 bg-success rounded-full animate-pulse"></div>
+              <span>Last updated: {new Date().toLocaleDateString()}</span>
               </div>
             </div>
           </div>
 
-            {/* Right column - Recent Activity (moved from middle) */}
-            <div className="md:col-span-1">
-              {/* Recent Activity Card */}
-              <div className="card bg-base-200/50 shadow-sm h-full">
-                <div className="card-body p-3 sm:p-4 flex flex-col h-full">
-                  <h3 className="card-title text-sm">Recent Activity</h3>
-                  <div className="space-y-3 mt-1 flex-grow">
-                    {/* Default state - No activity */}
-                    <div className="flex flex-col items-center justify-center h-full py-8">
-                      <div className="w-12 h-12 rounded-full bg-base-300 flex items-center justify-center text-base-content/60 mb-3">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          {/* Portfolio Analytics Section - Moved to top */}
+          <div className="mb-8 card bg-base-100 shadow-xl p-4 sm:p-6">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Portfolio Analytics
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Left column - Investment Breakdown */}
+              <div className="md:col-span-1">
+                {/* Investment Breakdown Card - Enhanced with charts */}
+                <div className="card bg-base-200/50 shadow-sm h-full">
+                  <div className="card-body p-3 sm:p-4 flex flex-col justify-between h-full">
+                    <div>
+                      <h3 className="card-title text-base">Investment Breakdown by Tags</h3>
+                      
+                      <div className="flex flex-col gap-3 mt-4">
+                        {/* Horizontal Bar Chart */}
+                        <div className="space-y-3">
+                          {Object.keys(investmentDistribution).length === 0 ? (
+                            <div className="text-sm text-center py-4 opacity-70">No tag data available</div>
+                          ) : (
+                            <>
+                              {/* Calculate total for percentage */}
+                              {(() => {
+                                const totalTags = Object.values(investmentDistribution).reduce((sum, count) => sum + count, 0);
+                                
+                                // Get top 8 tags by count
+                                const topTags = Object.entries(investmentDistribution)
+                                  .sort(([, countA], [, countB]) => countB - countA)
+                                  .slice(0, 8);
+                                
+                                // Color palette for bars
+                                const colors = [
+                                  "bg-primary", "bg-secondary", "bg-accent", 
+                                  "bg-info", "bg-success", "bg-warning", 
+                                  "bg-error", "bg-neutral"
+                                ];
+                                
+                                return topTags.map(([tag, count], index) => (
+                                  <div key={tag}>
+                                    <div className="flex justify-between items-center mb-1.5">
+                                      <span className="text-sm font-medium flex items-center gap-1.5">
+                                        <span className={`w-3 h-3 rounded-full ${colors[index % colors.length]} inline-block`}></span>
+                                        {tag.charAt(0).toUpperCase() + tag.slice(1)}
+                                      </span>
+                                      <span className="text-sm">{count}</span>
+                                    </div>
+                                    <div className="w-full bg-base-300 rounded-full h-3 overflow-hidden">
+                                      <div 
+                                        className={`${colors[index % colors.length]} h-3 rounded-full shadow-inner`}
+                                        style={{ width: `${(count / totalTags) * 100}%` }}
+                                      ></div>
+                                    </div>
+                                  </div>
+                                ));
+                              })()}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Summary Stats - Moved to bottom for alignment */}
+                    <div className="flex justify-between items-center mt-auto pt-3 text-sm text-center">
+                      <div>
+                        <div className="font-bold text-lg">{projectsCount}</div>
+                        <div className="opacity-70">Total</div>
+                      </div>
+                      <div className="divider divider-horizontal mx-0"></div>
+                      <div>
+                        <div className="font-bold text-lg">{investmentStatusDistribution.funded}</div>
+                        <div className="opacity-70">Funded</div>
+                      </div>
+                      <div className="divider divider-horizontal mx-0"></div>
+                      <div>
+                        <div className="font-bold text-lg">{investmentStatusDistribution.active}</div>
+                        <div className="opacity-70">Active</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Middle column - Stats Cards (moved from right) */}
+              <div className="md:col-span-1 flex flex-col h-full">
+                <div className="grid grid-rows-3 gap-3 h-full">
+                {/* Projects Backed Card */}
+                <div className="card bg-gradient-to-br from-primary/80 to-primary text-primary-content shadow-sm">
+                    <div className="card-body p-3 flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h2 className="text-base font-medium opacity-80">Projects Backed</h2>
+                        <p className="text-2xl font-bold">{projectsCount}</p>
+                      </div>
+                      <div className="rounded-full bg-primary-content/20 p-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                         </svg>
                       </div>
-                      <h4 className="font-medium text-sm text-center">No Recent Activity</h4>
-                      <p className="text-xs opacity-70 text-center mt-1">Your activity will appear here once you start interacting with projects</p>
+                    </div>
+                    <div className="mt-2 text-xs text-black">
+                      <span className="flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                        Investment activity
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tasks Participated Card */}
+                <div className="card bg-gradient-to-br from-secondary/80 to-secondary text-secondary-content shadow-sm">
+                    <div className="card-body p-3 flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h2 className="text-base font-medium opacity-80">Tasks Participated</h2>
+                        <p className="text-2xl font-bold">{tasksCount}</p>
+                      </div>
+                      <div className="rounded-full bg-secondary-content/20 p-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                    </div>
+                    </div>
+                    <div className="mt-2 text-xs text-secondary-content">
+                      <span className="flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Project contributions
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Token Balance Card */}
+                <div className="card bg-gradient-to-br from-accent/80 to-accent text-accent-content shadow-sm">
+                    <div className="card-body p-3 flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h2 className="text-base font-medium opacity-80">Token Balance</h2>
+                        <div className="flex items-baseline gap-1">
+                          <p className="text-2xl font-bold">{tokenBalance.unlocked.toLocaleString()}</p>
+                          <p className="text-xs opacity-80">/ {tokenBalance.total.toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <div className="rounded-full bg-accent-content/20 p-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                  </div>
+                    <div className="mt-2">
+                      <div className="w-full bg-accent-content/30 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-accent-content h-full rounded-full" 
+                          style={{ width: `${tokenBalance.total > 0 ? (tokenBalance.unlocked / tokenBalance.total) * 100 : 0}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex justify-between text-xs mt-1 text-accent-content">
+                        <span>Unlocked</span>
+                        <span>{tokenBalance.total > 0 ? Math.round((tokenBalance.unlocked / tokenBalance.total) * 100) : 0}%</span>
+                        </div>
+                      </div>
+                    </div>
+                </div>
+              </div>
+            </div>
+
+              {/* Right column - Recent Activity (moved from middle) */}
+              <div className="md:col-span-1">
+                {/* Recent Activity Card */}
+                <div className="card bg-base-200/50 shadow-sm h-full">
+                  <div className="card-body p-3 sm:p-4 flex flex-col h-full">
+                    <h3 className="card-title text-sm">Recent Activity</h3>
+                    <div className="space-y-3 mt-1 flex-grow">
+                      {/* Default state - No activity */}
+                      <div className="flex flex-col items-center justify-center h-full py-8">
+                        <div className="w-12 h-12 rounded-full bg-base-300 flex items-center justify-center text-base-content/60 mb-3">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <h4 className="font-medium text-sm text-center">No Recent Activity</h4>
+                        <p className="text-xs opacity-70 text-center mt-1">Your activity will appear here once you start interacting with projects</p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Main Content with Tabs */}
-        <div className="card bg-base-100 shadow-xl overflow-hidden">
-          {/* Custom Tabs with Animated Indicator */}
-          <div className="bg-base-200/50 p-1 rounded-t-2xl border-b border-base-300">
-            <div className="flex relative">
-              <button
-                className={`flex-1 py-3 px-4 text-center relative z-10 transition-all duration-300 ${activeTab === "projects" ? "text-primary font-medium" : "text-base-content/70 hover:text-base-content"}`}
-                onClick={() => setActiveTab("projects")}
-              >
-                <div className="flex justify-center items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                  </svg>
-                  <span>My Investments</span>
-                </div>
-              </button>
-              <button
-                className={`flex-1 py-3 px-4 text-center relative z-10 transition-all duration-300 ${activeTab === "tasks" ? "text-primary font-medium" : "text-base-content/70 hover:text-base-content"}`}
-                onClick={() => setActiveTab("tasks")}
-              >
-                <div className="flex justify-center items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                  </svg>
-                  <span>My Tasks</span>
-                </div>
-              </button>
-              {/* Animated Tab Indicator */}
-              <div 
-                className={`absolute bottom-0 h-0.5 bg-primary transition-all duration-300 rounded-full`}
-                style={{ 
-                  left: activeTab === "projects" ? "0%" : "50%", 
-                  width: "50%",
-                  transform: activeTab === "projects" ? "translateX(0%)" : "translateX(0%)"
-                }}
-              ></div>
-            </div>
-            </div>
+          {/* Main Content with Tabs */}
+          <div className="card bg-base-100 shadow-xl overflow-hidden">
+            {/* Custom Tabs with Animated Indicator */}
+            <div className="bg-base-200/50 p-1 rounded-t-2xl border-b border-base-300">
+              <div className="flex relative">
+                <button
+                  className={`flex-1 py-3 px-4 text-center relative z-10 transition-all duration-300 ${activeTab === "projects" ? "text-primary font-medium" : "text-base-content/70 hover:text-base-content"}`}
+                  onClick={() => setActiveTab("projects")}
+                >
+                  <div className="flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2M7 7h10" />
+                    </svg>
+                    <span>My Investments</span>
+                  </div>
+                </button>
+                <button
+                  className={`flex-1 py-3 px-4 text-center relative z-10 transition-all duration-300 ${activeTab === "tasks" ? "text-primary font-medium" : "text-base-content/70 hover:text-base-content"}`}
+                  onClick={() => setActiveTab("tasks")}
+                >
+                  <div className="flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <span>My Tasks</span>
+                  </div>
+                </button>
+                {/* Animated Tab Indicator */}
+                <div 
+                  className={`absolute bottom-0 h-0.5 bg-primary transition-all duration-300 rounded-full`}
+                  style={{ 
+                    left: activeTab === "projects" ? "0%" : "50%", 
+                    width: "50%",
+                    transform: activeTab === "projects" ? "translateX(0%)" : "translateX(0%)"
+                  }}
+                ></div>
+              </div>
+              </div>
 
-          {/* Content Area */}
-          <div className="p-6">
-            {/* Projects Tab Content */}
-            {activeTab === "projects" && (
-              <div className="space-y-8">
-                {/* Investments Section */}
+            {/* Content Area */}
+            <div className="p-6">
+              {/* Projects Tab Content */}
+              {activeTab === "projects" && (
+                <div className="space-y-8">
+                  {/* Investments Section */}
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        My Investments
+                      </h2>
+                      <Link href="/projects" className="btn btn-primary btn-sm">
+                        <div className="flex items-center justify-center gap-2 h-full">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                          <span className="inline-block">Invest More</span>
+                        </div>
+                      </Link>
+                    </div>
+                    <div className="bg-base-200/30 rounded-xl p-1">
+                      <UserInvestmentsTable 
+                        userInvestments={userInvestments} 
+                        isLoadingData={isLoadingData} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Token Release Schedule Section */}
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Token Release Schedule
+                      </h2>
+                      <button 
+                        className="btn btn-outline btn-sm"
+                        onClick={() => {
+                          const modal = document.getElementById('vesting-info-modal') as HTMLDialogElement;
+                          if (modal) modal.showModal();
+                        }}
+                      >
+                        <div className="flex items-center justify-center gap-2 h-full">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                          <span className="inline-block">How Vesting Works</span>
+                        </div>
+                      </button>
+                      
+                      {/* Vesting Info Modal */}
+                      <dialog id="vesting-info-modal" className="modal modal-bottom sm:modal-middle">
+                        <div className="modal-box">
+                          <h3 className="font-bold text-lg mb-4">How Token Vesting Works</h3>
+                          
+                          <div className="space-y-4">
+                            <p className="text-sm">
+                              Token vesting is a process where tokens are gradually released over time according to a predetermined schedule.
+                            </p>
+                            
+                            <div className="bg-base-200 p-4 rounded-lg">
+                              <h4 className="font-semibold mb-2">Key Concepts:</h4>
+                              <ul className="list-disc list-inside space-y-2 text-sm">
+                                <li><span className="font-medium">Vesting Period:</span> The total time over which your tokens will be released.</li>
+                                <li><span className="font-medium">Release Schedule:</span> The specific dates and percentages of tokens to be unlocked.</li>
+                                <li><span className="font-medium">Cliff Period:</span> An initial period where no tokens are released, followed by the first release.</li>
+                              </ul>
+                            </div>
+                            
+                            <div className="bg-base-200 p-4 rounded-lg">
+                              <h4 className="font-semibold mb-2">Example Schedule:</h4>
+                              <div className="overflow-x-auto">
+                                <table className="table table-sm w-full">
+                                  <thead>
+                                    <tr>
+                                      <th>Time</th>
+                                      <th>Release</th>
+                                      <th>Total Unlocked</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    <tr>
+                                      <td>TGE (Token Generation Event)</td>
+                                      <td>10%</td>
+                                      <td>10%</td>
+                                    </tr>
+                                    <tr>
+                                      <td>3 months after TGE</td>
+                                      <td>15%</td>
+                                      <td>25%</td>
+                                    </tr>
+                                    <tr>
+                                      <td>6 months after TGE</td>
+                                      <td>25%</td>
+                                      <td>50%</td>
+                                    </tr>
+                                    <tr>
+                                      <td>12 months after TGE</td>
+                                      <td>50%</td>
+                                      <td>100%</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="modal-action">
+                            <button className="btn" onClick={() => (document.getElementById('vesting-info-modal') as HTMLDialogElement)?.close()}>
+                              Close
+                            </button>
+                          </div>
+                        </div>
+                      </dialog>
+                    </div>
+                    <div className="bg-base-200/30 rounded-xl p-1">
+                      <TokenReleaseSchedule 
+                        tokenReleaseInfo={tokenReleaseInfo}
+                        isLoadingData={isLoadingTokenData}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tasks Tab Content */}
+              {activeTab === "tasks" && (
                 <div>
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold flex items-center gap-2">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                       </svg>
-                      My Investments
+                      My Tasks
                     </h2>
                     <Link href="/projects" className="btn btn-primary btn-sm">
                       <div className="flex items-center justify-center gap-2 h-full">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                       </svg>
-                        <span className="inline-block">Invest More</span>
+                        <span className="inline-block">Find Tasks</span>
                       </div>
                     </Link>
                   </div>
                   <div className="bg-base-200/30 rounded-xl p-1">
-                    <UserInvestmentsTable 
-                      userInvestments={userInvestments} 
-                      isLoadingData={isLoadingData} 
-                    />
+                    <UserTasksTable />
                   </div>
                 </div>
-
-                {/* Token Release Schedule Section */}
-                <div>
-                  <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-bold flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Token Release Schedule
-                    </h2>
-                    <button 
-                      className="btn btn-outline btn-sm"
-                      onClick={() => {
-                        const modal = document.getElementById('vesting-info-modal') as HTMLDialogElement;
-                        if (modal) modal.showModal();
-                      }}
-                    >
-                      <div className="flex items-center justify-center gap-2 h-full">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                        <span className="inline-block">How Vesting Works</span>
-                      </div>
-                    </button>
-                    
-                    {/* Vesting Info Modal */}
-                    <dialog id="vesting-info-modal" className="modal modal-bottom sm:modal-middle">
-                      <div className="modal-box">
-                        <h3 className="font-bold text-lg mb-4">How Token Vesting Works</h3>
-                        
-                        <div className="space-y-4">
-                          <p className="text-sm">
-                            Token vesting is a process where tokens are gradually released over time according to a predetermined schedule.
-                          </p>
-                          
-                          <div className="bg-base-200 p-4 rounded-lg">
-                            <h4 className="font-semibold mb-2">Key Concepts:</h4>
-                            <ul className="list-disc list-inside space-y-2 text-sm">
-                              <li><span className="font-medium">Vesting Period:</span> The total time over which your tokens will be released.</li>
-                              <li><span className="font-medium">Release Schedule:</span> The specific dates and percentages of tokens to be unlocked.</li>
-                              <li><span className="font-medium">Cliff Period:</span> An initial period where no tokens are released, followed by the first release.</li>
-                            </ul>
-                          </div>
-                          
-                          <div className="bg-base-200 p-4 rounded-lg">
-                            <h4 className="font-semibold mb-2">Example Schedule:</h4>
-                            <div className="overflow-x-auto">
-                              <table className="table table-sm w-full">
-                                <thead>
-                                  <tr>
-                                    <th>Time</th>
-                                    <th>Release</th>
-                                    <th>Total Unlocked</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  <tr>
-                                    <td>TGE (Token Generation Event)</td>
-                                    <td>10%</td>
-                                    <td>10%</td>
-                                  </tr>
-                                  <tr>
-                                    <td>3 months after TGE</td>
-                                    <td>15%</td>
-                                    <td>25%</td>
-                                  </tr>
-                                  <tr>
-                                    <td>6 months after TGE</td>
-                                    <td>25%</td>
-                                    <td>50%</td>
-                                  </tr>
-                                  <tr>
-                                    <td>12 months after TGE</td>
-                                    <td>50%</td>
-                                    <td>100%</td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="modal-action">
-                          <button className="btn" onClick={() => (document.getElementById('vesting-info-modal') as HTMLDialogElement)?.close()}>
-                            Close
-                          </button>
-                        </div>
-                      </div>
-                    </dialog>
-                  </div>
-                  <div className="bg-base-200/30 rounded-xl p-1">
-                    <TokenReleaseSchedule 
-                      tokenReleaseInfo={tokenReleaseInfo}
-                      isLoadingData={isLoadingTokenData}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Tasks Tab Content */}
-            {activeTab === "tasks" && (
-              <div>
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
-                    My Tasks
-                  </h2>
-                  <Link href="/projects" className="btn btn-primary btn-sm">
-                    <div className="flex items-center justify-center gap-2 h-full">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                      <span className="inline-block">Find Tasks</span>
-                    </div>
-                  </Link>
-                </div>
-                <div className="bg-base-200/30 rounded-xl p-1">
-                  <UserTasksTable />
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
     </div>
+  );
+};
+
+const DashboardPage = () => {
+  return (
+    <PrivyAuthGuard fallbackUrl="/">
+      <DashboardContent />
+    </PrivyAuthGuard>
   );
 };
 

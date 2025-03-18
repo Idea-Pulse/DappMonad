@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePrivy } from "@privy-io/react-auth";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
 import { useContractRead, useContractWrite } from "~~/hooks/contracts";
 import { notification } from "~~/utils/scaffold-eth";
@@ -129,6 +130,7 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
   const { readMethod, isLoading } = useContractRead();
   const { writeMethod } = useContractWrite();
   const { address } = useAccount();
+  const { login, authenticated, ready } = usePrivy();
   const [project, setProject] = useState<ProjectData | null>(() => projectCache[projectId] || null);
   const [fundingInfo, setFundingInfo] = useState<FundingInfo | null>(() => fundingCache[projectId] || null);
   const [taskCount, setTaskCount] = useState<number | null>(() => taskCountCache[projectId] || null);
@@ -181,6 +183,33 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
 
   // Handle contribution submission
   const handleContribute = async () => {
+    if (!authenticated) {
+      // If user is not authenticated, prompt them to sign in
+      notification.info(
+        <div>
+          <p>Please sign in first</p>
+          <p className="text-xs mt-1">You need to sign in to contribute to this project</p>
+        </div>,
+        { duration: 5000 }
+      );
+      return;
+    }
+
+    if (isFundingClosed) {
+      notification.error(
+        <div>
+          <p>Funding period has ended</p>
+          <p className="text-xs mt-1">
+            {fundingProgress >= 100 
+              ? "This project has successfully reached its funding goal!" 
+              : "The funding period for this project has ended."}
+          </p>
+        </div>,
+        { duration: 5000 }
+      );
+      return;
+    }
+
     if (!contributionAmount || parseFloat(contributionAmount) <= 0) {
       notification.error("Please enter a valid amount");
       return;
@@ -274,8 +303,8 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
 
   // Handle token claim
   const handleClaimTokens = async () => {
-    if (!address) {
-      notification.error("Please connect your wallet");
+    if (!authenticated) {
+      notification.error("Please sign in first");
       return;
     }
 
@@ -327,23 +356,11 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
 
   // Fetch claim data
   const fetchClaimData = async () => {
-    if (!address || !fundingInfo) return;
+    if (!fundingInfo) return;
 
     setIsLoadingClaimData(true);
     try {
-      // Get claimed amount
-      const claimedResult = await readMethod("getClaimedAmount", [numericProjectId, address]);
-      if (claimedResult !== null) {
-        setClaimedAmount(BigInt(claimedResult.toString()));
-      }
-
-      // Get token contribution
-      const contributionResult = await readMethod("getTokenContribution", [numericProjectId, address]);
-      if (contributionResult !== null) {
-        setTokenContribution(BigInt(contributionResult.toString()));
-      }
-
-      // Get project token info
+      // Get project token info (always fetch this regardless of authentication)
       const tokenInfoResult = await readMethod("getProjectToken", [numericProjectId]);
       if (tokenInfoResult) {
         const parsedTokenInfo = {
@@ -356,39 +373,54 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
           vestingDuration: Number(tokenInfoResult[6]),
         };
         setTokenInfo(parsedTokenInfo);
+      }
+
+      // Only fetch user-specific data if authenticated
+      if (authenticated && address) {
+        // Get claimed amount
+        const claimedResult = await readMethod("getClaimedAmount", [numericProjectId, address]);
+        if (claimedResult !== null) {
+          setClaimedAmount(BigInt(claimedResult.toString()));
+        }
+
+        // Get token contribution
+        const contributionResult = await readMethod("getTokenContribution", [numericProjectId, address]);
+        if (contributionResult !== null) {
+          setTokenContribution(BigInt(contributionResult.toString()));
+        }
 
         // Calculate unlocked amount based on vesting schedule
-        if (tokenContribution > 0n && parsedTokenInfo.vestingStart > 0) {
+        if (tokenContribution > 0n && tokenInfo && tokenInfo.vestingStart > 0) {
           const now = Math.floor(Date.now() / 1000);
-          const vestingEnd = parsedTokenInfo.vestingStart + parsedTokenInfo.vestingDuration;
+          const vestingEnd = tokenInfo.vestingStart + tokenInfo.vestingDuration;
 
           if (now >= vestingEnd) {
             // Fully vested
             setUnlockedAmount(tokenContribution);
             setUnlockPercentage(100);
-          } else if (now <= parsedTokenInfo.vestingStart) {
+          } else if (now <= tokenInfo.vestingStart) {
             // Vesting not started
             setUnlockedAmount(0n);
             setUnlockPercentage(0);
           } else {
             // Partially vested - linear vesting
-            const timeElapsed = now - parsedTokenInfo.vestingStart;
-            const vestingProgress = timeElapsed / parsedTokenInfo.vestingDuration;
+            const timeElapsed = now - tokenInfo.vestingStart;
+            const vestingProgress = timeElapsed / tokenInfo.vestingDuration;
             const percentage = Math.min(100, Math.floor(vestingProgress * 100));
 
             setUnlockPercentage(percentage);
             setUnlockedAmount(tokenContribution * BigInt(percentage) / BigInt(100));
           }
         }
+
+        // Check if funding is complete and tokens can be claimed
+        const now = new Date();
+        const endDate = new Date(fundingInfo.endTime * 1000);
+        const isFundingComplete = fundingInfo.hasMetFundingGoal || now > endDate;
+
+        // Can claim if funding is complete, user has tokens, and there are unlocked tokens not yet claimed
+        setCanClaim(isFundingComplete && tokenContribution > 0n && unlockedAmount > claimedAmount);
       }
-
-      // Check if funding is complete and tokens can be claimed
-      const now = new Date();
-      const endDate = new Date(fundingInfo.endTime * 1000);
-      const isFundingComplete = fundingInfo.hasMetFundingGoal || now > endDate;
-
-      // Can claim if funding is complete, user has tokens, and there are unlocked tokens not yet claimed
-      setCanClaim(isFundingComplete && tokenContribution > 0n && unlockedAmount > claimedAmount);
     } catch (err) {
       console.error("Failed to fetch claim data:", err);
     } finally {
@@ -476,10 +508,10 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
 
   // Fetch claim data when funding info is available
   useEffect(() => {
-    if (fundingInfo && address && !isLoadingData) {
+    if (fundingInfo && !isLoadingData) {
       fetchClaimData();
     }
-  }, [fundingInfo, address, isLoadingData]);
+  }, [fundingInfo, authenticated, address, isLoadingData]);
 
   if (isLoading || isLoadingData || !project) {
     return (
@@ -608,7 +640,7 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
               </div>
 
               {/* Move Project Tokens card here */}
-              {fundingInfo && address && (
+              {fundingInfo && (
                 <div className="p-4 shadow-lg card bg-base-100 sm:p-6 relative overflow-hidden border border-transparent before:absolute before:inset-0 before:p-[1px] before:rounded-2xl before:bg-gradient-to-r before:from-primary/30 before:via-secondary/30 before:to-accent/30 before:-z-10 after:absolute after:inset-0 after:rounded-2xl after:bg-base-100 after:-z-10">
                   {/* Add aurora effect */}
                   <div className="absolute -top-16 -right-16 w-32 h-32 bg-gradient-to-br from-primary/5 via-secondary/5 to-accent/5 rounded-full blur-xl opacity-60 animate-pulse"></div>
@@ -625,125 +657,138 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
                       </div>
                     ) : (
                       <>
-                        {tokenInfo && (
-                          <div className="mb-4">
-                            <p className="text-xs opacity-70 sm:text-sm mb-2">Token Allocation</p>
-                            <div className="w-full bg-base-200 rounded-full h-4 mb-2">
-                              <div className="flex h-4 rounded-full overflow-hidden">
-                                <div
-                                  className="bg-primary h-4"
-                                  style={{ width: "60%" }}
-                                  title="Crowdfunding Pool (60%)"
-                                ></div>
-                                <div
-                                  className="bg-secondary h-4"
-                                  style={{ width: "25%" }}
-                                  title="Task & DAO Pool (25%)"
-                                ></div>
-                                <div
-                                  className="bg-accent h-4"
-                                  style={{ width: "15%" }}
-                                  title="Ecosystem Pool (15%)"
-                                ></div>
+                        {tokenInfo ? (
+                          <>
+                            <div className="mb-4">
+                              <p className="text-xs opacity-70 sm:text-sm mb-2">Token Allocation</p>
+                              <div className="w-full bg-base-200 rounded-full h-4 mb-2">
+                                <div className="flex h-4 rounded-full overflow-hidden">
+                                  <div
+                                    className="bg-primary h-4"
+                                    style={{ width: "60%" }}
+                                    title="Crowdfunding Pool (60%)"
+                                  ></div>
+                                  <div
+                                    className="bg-secondary h-4"
+                                    style={{ width: "25%" }}
+                                    title="Task & DAO Pool (25%)"
+                                  ></div>
+                                  <div
+                                    className="bg-accent h-4"
+                                    style={{ width: "15%" }}
+                                    title="Ecosystem Pool (15%)"
+                                  ></div>
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex justify-between text-xs opacity-70">
-                              <span>Crowdfunding: 60%</span>
-                              <span>Task & DAO: 25%</span>
-                              <span>Ecosystem: 15%</span>
-                            </div>
-                            <div className="p-3 rounded-lg bg-base-200/50 border border-base-300/50 mt-4">
-                              <p className="text-xs opacity-70 sm:text-sm">
-                                <span className="material-icons text-primary text-xs align-text-bottom mr-1">inventory_2</span>
-                                Total Supply
-                              </p>
-                              <p className="mt-1 text-base font-semibold sm:text-lg">{formatAmount(tokenInfo.totalSupply)} Tokens</p>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="space-y-4 mt-4">
-                          {tokenContribution > 0n ? (
-                            <>
-                              <div className="p-3 rounded-lg bg-base-200/50 border border-base-300/50">
+                              <div className="flex justify-between text-xs opacity-70">
+                                <span>Crowdfunding: 60%</span>
+                                <span>Task & DAO: 25%</span>
+                                <span>Ecosystem: 15%</span>
+                              </div>
+                              <div className="p-3 rounded-lg bg-base-200/50 border border-base-300/50 mt-4">
                                 <p className="text-xs opacity-70 sm:text-sm">
-                                  <span className="material-icons text-primary text-xs align-text-bottom mr-1">account_balance_wallet</span>
-                                  Your Token Allocation
+                                  <span className="material-icons text-primary text-xs align-text-bottom mr-1">inventory_2</span>
+                                  Total Supply
                                 </p>
-                                <p className="mt-1 text-base font-semibold sm:text-lg bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
-                                  {formatAmount(tokenContribution)} Tokens
-                                </p>
+                                <p className="mt-1 text-base font-semibold sm:text-lg">{formatAmount(tokenInfo.totalSupply)} Tokens</p>
                               </div>
+                            </div>
 
-                              {tokenInfo && tokenInfo.vestingDuration > 0 && (
-                                <div className="mt-4">
-                                  <div className="flex justify-between items-center mb-2">
-                                    <p className="text-xs opacity-70 sm:text-sm">
-                                      <span className="material-icons text-primary text-xs align-text-bottom mr-1">lock_open</span>
-                                      Unlock Progress
-                                    </p>
-                                    <span className="text-xs font-medium">{unlockPercentage}%</span>
-                                  </div>
-                                  <div className="w-full bg-base-200 rounded-full h-2.5">
-                                    <div
-                                      className="bg-primary h-2.5 rounded-full transition-all duration-500"
-                                      style={{ width: `${unlockPercentage}%` }}
-                                    ></div>
-                                  </div>
-                                  <div className="flex justify-between text-xs opacity-70 mt-1">
-                                    <span>Unlocked: {formatAmount(unlockedAmount)}</span>
-                                    <span>Total: {formatAmount(tokenContribution)}</span>
-                                  </div>
-                                  <p className="text-xs opacity-60 mt-2 italic">
-                                    Tokens unlock linearly over 180 days
-                                  </p>
-                                </div>
-                              )}
+                            {authenticated ? (
+                              <div className="space-y-4 mt-4">
+                                {tokenContribution > 0n ? (
+                                  <>
+                                    <div className="p-3 rounded-lg bg-base-200/50 border border-base-300/50">
+                                      <p className="text-xs opacity-70 sm:text-sm">
+                                        <span className="material-icons text-primary text-xs align-text-bottom mr-1">account_balance_wallet</span>
+                                        Your Token Allocation
+                                      </p>
+                                      <p className="mt-1 text-base font-semibold sm:text-lg bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
+                                        {formatAmount(tokenContribution)} Tokens
+                                      </p>
+                                    </div>
 
-                              {claimedAmount > 0n && (
-                                <div className="p-3 rounded-lg bg-success/10 border border-success/20">
-                                  <p className="text-xs opacity-70 sm:text-sm">
-                                    <span className="material-icons text-success text-xs align-text-bottom mr-1">check_circle</span>
-                                    Already Claimed
-                                  </p>
-                                  <p className="mt-1 text-base font-semibold sm:text-lg text-success">{formatAmount(claimedAmount)} Tokens</p>
-                                </div>
-                              )}
+                                    {tokenInfo.vestingDuration > 0 && (
+                                      <div className="mt-4">
+                                        <div className="flex justify-between items-center mb-2">
+                                          <p className="text-xs opacity-70 sm:text-sm">
+                                            <span className="material-icons text-primary text-xs align-text-bottom mr-1">lock_open</span>
+                                            Unlock Progress
+                                          </p>
+                                          <span className="text-xs font-medium">{unlockPercentage}%</span>
+                                        </div>
+                                        <div className="w-full bg-base-200 rounded-full h-2.5">
+                                          <div
+                                            className="bg-primary h-2.5 rounded-full transition-all duration-500"
+                                            style={{ width: `${unlockPercentage}%` }}
+                                          ></div>
+                                        </div>
+                                        <div className="flex justify-between text-xs opacity-70 mt-1">
+                                          <span>Unlocked: {formatAmount(unlockedAmount)}</span>
+                                          <span>Total: {formatAmount(tokenContribution)}</span>
+                                        </div>
+                                        <p className="text-xs opacity-60 mt-2 italic">
+                                          Tokens unlock linearly over 180 days
+                                        </p>
+                                      </div>
+                                    )}
 
-                              <div className="mt-4">
-                                <button
-                                  className={`btn btn-primary w-full btn-sm sm:btn-md ${isClaiming ? 'loading' : ''} ${!canClaim ? 'btn-disabled' : ''}`}
-                                  onClick={handleClaimTokens}
-                                  disabled={isClaiming || !canClaim}
-                                >
-                                  {isClaiming ? (
-                                    <>
-                                      <span className="loading loading-spinner loading-xs"></span>
-                                      Processing...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <span className="material-icons text-sm align-text-bottom mr-1">redeem</span>
-                                      Claim Tokens
-                                    </>
-                                  )}
-                                </button>
+                                    {claimedAmount > 0n && (
+                                      <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                                        <p className="text-xs opacity-70 sm:text-sm">
+                                          <span className="material-icons text-success text-xs align-text-bottom mr-1">check_circle</span>
+                                          Already Claimed
+                                        </p>
+                                        <p className="mt-1 text-base font-semibold sm:text-lg text-success">{formatAmount(claimedAmount)} Tokens</p>
+                                      </div>
+                                    )}
 
-                                {!canClaim && tokenContribution > 0n && (
-                                  <p className="text-xs text-center mt-2 opacity-60 italic">
-                                    {claimedAmount >= tokenContribution
-                                      ? 'You have already claimed all your tokens'
-                                      : unlockedAmount <= claimedAmount
-                                        ? 'No tokens available for claiming yet'
-                                        : 'Tokens not yet available for claiming'}
-                                  </p>
+                                    <div className="mt-4">
+                                      <button
+                                        className={`btn btn-primary w-full btn-sm sm:btn-md ${isClaiming ? 'loading' : ''} ${!canClaim ? 'btn-disabled' : ''}`}
+                                        onClick={handleClaimTokens}
+                                        disabled={isClaiming || !canClaim}
+                                      >
+                                        {isClaiming ? (
+                                          <>
+                                            <span className="loading loading-spinner loading-xs"></span>
+                                            Processing...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span className="material-icons text-sm align-text-bottom mr-1">redeem</span>
+                                            Claim Tokens
+                                          </>
+                                        )}
+                                      </button>
+
+                                      {!canClaim && tokenContribution > 0n && (
+                                        <p className="text-xs text-center mt-2 opacity-60 italic">
+                                          {claimedAmount >= tokenContribution
+                                            ? 'You have already claimed all your tokens'
+                                            : unlockedAmount <= claimedAmount
+                                              ? 'No tokens available for claiming yet'
+                                              : 'Tokens not yet available for claiming'}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p className="text-sm opacity-70 italic">You have not contributed to this project yet</p>
                                 )}
                               </div>
-                            </>
-                          ) : (
-                            <p className="text-sm opacity-70 italic">You have not contributed to this project yet</p>
-                          )}
-                        </div>
+                            ) : (
+                              <div className="mt-4 p-3 rounded-lg bg-info/10 border border-info/20">
+                                <p className="text-sm flex items-center">
+                                  <span className="material-icons text-info text-sm align-text-bottom mr-1">info</span>
+                                  <span>Sign in to view your token allocation and claim tokens</span>
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm opacity-70 italic">Token information is not available for this project</p>
+                        )}
                       </>
                     )}
                   </div>
@@ -877,13 +922,56 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
                   <p className="mt-1 text-base font-semibold sm:text-lg">
                     {fundingProgress >= 100 ? (
                       <span className="text-success">Funding Goal Achieved!</span>
+                    ) : isFundingClosed ? (
+                      <span className="text-warning">Funding Period Ended</span>
                     ) : (
                       <span>Completed {fundingProgress.toFixed(1)}%</span>
                     )}
                   </p>
                 </div>
 
+                {isFundingClosed && fundingProgress >= 100 && (
+                  <div className="p-3 rounded-lg bg-success/10 border border-success/20 mb-4">
+                    <p className="text-xs opacity-80 sm:text-sm flex items-center">
+                      <span className="material-icons text-success text-xs align-text-bottom mr-1">celebration</span>
+                      <span>Project Development Status</span>
+                    </p>
+                    <p className="mt-1 text-sm">
+                      This project has been successfully funded and is now in development. 
+                      {tokenInfo && " Token holders can track progress and participate in governance decisions."}
+                    </p>
+                  </div>
+                )}
+
+                {isFundingClosed && fundingProgress < 100 && (
+                  <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 mb-4">
+                    <p className="text-xs opacity-80 sm:text-sm flex items-center">
+                      <span className="material-icons text-warning text-xs align-text-bottom mr-1">info</span>
+                      <span>Project Status</span>
+                    </p>
+                    <p className="mt-1 text-sm">
+                      This project did not reach its funding goal. Contributors can claim back their funds.
+                    </p>
+                  </div>
+                )}
+
                 <div className="mt-4">
+                  {!authenticated && ready && (
+                    <div className="alert alert-info mb-4 py-2 text-sm">
+                      <span className="material-icons text-sm align-text-bottom mr-1">info</span>
+                      <span>Please sign in to contribute to this project</span>
+                    </div>
+                  )}
+                  {authenticated && isFundingClosed && (
+                    <div className="alert alert-success mb-4 py-2 text-sm">
+                      <span className="material-icons text-sm align-text-bottom mr-1">check_circle</span>
+                      <span>
+                        {fundingProgress >= 100 
+                          ? "This project has successfully reached its funding goal!" 
+                          : "The funding period for this project has ended."}
+                      </span>
+                    </div>
+                  )}
                   <div className="form-control">
                     <label className="flex justify-between mb-2">
                       <span className="text-xs opacity-70 sm:text-sm">Contribution Amount (USDC)</span>
@@ -898,19 +986,29 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
                         className="input input-bordered input-sm sm:input-md w-full"
                         value={contributionAmount}
                         onChange={(e) => setContributionAmount(e.target.value)}
-                        disabled={isContributing || isFundingClosed}
+                        disabled={isContributing || isFundingClosed || !authenticated}
                         min="0"
                         step="0.01"
                       />
                       <button
                         className={`btn btn-sm sm:btn-md ${isFundingClosed ? 'btn-disabled' : 'btn-primary'} ${isContributing ? 'loading' : ''}`}
-                        onClick={handleContribute}
-                        disabled={isContributing || isFundingClosed || !contributionAmount || parseFloat(contributionAmount) <= 0}
+                        onClick={!authenticated ? login : handleContribute}
+                        disabled={isContributing || isFundingClosed}
                       >
                         {isContributing ? (
                           <>
                             <span className="loading loading-spinner loading-xs"></span>
                             Processing...
+                          </>
+                        ) : isFundingClosed ? (
+                          <>
+                            <span className="material-icons text-sm align-text-bottom mr-1">event_busy</span>
+                            Funding Ended
+                          </>
+                        ) : !authenticated ? (
+                          <>
+                            <span className="material-icons text-sm align-text-bottom mr-1">login</span>
+                            Sign In
                           </>
                         ) : (
                           <>
@@ -922,6 +1020,12 @@ export function ProjectDetailsClient({ projectId }: { projectId: string }) {
                     </div>
                     <label className="label">
                       <span className="text-xs opacity-60">Minimum Amount: 0.01 USDC</span>
+                      {!authenticated && ready && (
+                        <span className="text-xs text-primary">Sign in to contribute</span>
+                      )}
+                      {authenticated && isFundingClosed && (
+                        <span className="text-xs text-success">Check token section for your allocation</span>
+                      )}
                     </label>
                   </div>
                 </div>

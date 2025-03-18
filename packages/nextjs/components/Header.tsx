@@ -3,11 +3,15 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAccount } from "wagmi";
+import { FaGithub } from "react-icons/fa";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 import { IdeaPulseLogo } from "~~/components/assets/IdeaPulseLogo";
-import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
+import { PrivyLogin } from "~~/components/PrivyLogin";
 import { useOutsideClick, useTargetNetwork } from "~~/hooks/scaffold-eth";
 import { SwitchTheme } from "~~/components/SwitchTheme";
+import { usePrivy } from "@privy-io/react-auth";
+import { WalletBalanceDropdown } from "~~/components/WalletBalanceDropdown";
 
 type HeaderMenuLink = {
   label: string;
@@ -15,31 +19,41 @@ type HeaderMenuLink = {
   icon?: React.ReactNode;
 };
 
-export const menuLinks: HeaderMenuLink[] = [
-  {
-    label: "Home",
-    href: "/",
-    icon: <span className="material-icons text-sm flex items-center">home</span>,
-  },
-  {
-    label: "Projects",
-    href: "/projects",
-    icon: <span className="material-icons text-sm flex items-center">apps</span>,
-  },
-  {
-    label: "Dashboard",
-    href: "/dashboard",
-    icon: <span className="material-icons text-sm flex items-center">dashboard</span>,
-  },
-  {
-    label: "About",
-    href: "/about",
-    icon: <span className="material-icons text-sm flex items-center">help_outline</span>,
-  },
-];
+export const getMenuLinks = (isAuthenticated: boolean): HeaderMenuLink[] => {
+  const baseLinks = [
+    {
+      label: "Home",
+      href: "/",
+      icon: <span className="material-icons text-sm flex items-center">home</span>,
+    },
+    {
+      label: "Projects",
+      href: "/projects",
+      icon: <span className="material-icons text-sm flex items-center">apps</span>,
+    },
+    {
+      label: "About",
+      href: "/about",
+      icon: <span className="material-icons text-sm flex items-center">help_outline</span>,
+    },
+  ];
+
+  if (isAuthenticated) {
+    // Insert Dashboard link after Projects
+    baseLinks.splice(2, 0, {
+      label: "Dashboard",
+      href: "/dashboard",
+      icon: <span className="material-icons text-sm flex items-center">dashboard</span>,
+    });
+  }
+
+  return baseLinks;
+};
 
 export const HeaderMenuLinks = () => {
   const pathname = usePathname();
+  const { authenticated } = usePrivy();
+  const menuLinks = getMenuLinks(authenticated);
 
   return (
     <>
@@ -74,6 +88,7 @@ export const Header = () => {
   const {
     /* targetNetwork */
   } = useTargetNetwork();
+  const { authenticated } = usePrivy();
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -146,7 +161,8 @@ export const Header = () => {
             </ul>
           </div>
           <div className="flex gap-3 items-center">
-            <RainbowKitCustomConnectButton />
+            {authenticated && <WalletBalanceDropdown />}
+            <PrivyLogin />
             <div className="ml-2 z-10">
               <SwitchTheme />
             </div>
